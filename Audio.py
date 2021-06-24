@@ -35,7 +35,7 @@ class LoadAudio():
         return (data2, sr)
     
     
-    # convert all audio to stereo
+    # convert all audio to mono
     def mono(audio):
         data, sr = audio
         if (data.shape[0] == 1):                                   # ignore if audio is already stereo
@@ -46,7 +46,8 @@ class LoadAudio():
     
     
     # resize all audio to same length
-    def resize(data, sr, max_ms):
+    def resize(audio, max_ms):
+        data, sr = audio
         num_rows, data_len = data.shape
         max_len = sr//1000 * max_ms    
         if (data_len > max_len):                                   # Truncate the signal to the given length     
@@ -76,7 +77,7 @@ class LoadAudio():
 class AudioDS(Dataset):
     def __init__(self, labels):
         self.labels = labels
-        self.max_ms = 1000   # 30 secs
+        self.max_ms = 4000   # 4 secs
         self.sr = 44100
     
             
@@ -86,68 +87,22 @@ class AudioDS(Dataset):
 
     def __getitem__(self, idx):
 
-        relative_path = self.labels[idx][0]
-        relative_path = relative_path.split("/")
-        
-        audio_id = relative_path[-1]
-        audio_file = audio_id.split("_")
-        id_num = audio_file[1]
-        audio_file = audio_file[0]+".wav"
- 
-        relative_path = 'C:/Users/Sarah/Documents/Courses/Semester 2/Deep Learning for Audio and Music/Assesment/Coursework/UrbanSound/data/'+relative_path[-2]+"/"+audio_file
-        class_id = self.labels[idx][3]                                              # class label
+        relative_path = self.labels[idx][0]                                         # audio file location
+        class_id = self.labels[idx][1]                                              # class label
 
         audio = LoadAudio.load(relative_path)                                       # load audio file
         audio = LoadAudio.resample(audio, self.sr)                                  # resample audio
-        audio,sr = LoadAudio.mono(audio)                                            # make audio mono
-        audio,sr = LoadAudio.resize(audio, sr, 30000)                                  # resize audio
-        
-        audio = audio.detach().numpy()
-        audio = audio[0,:]
-        length = len(audio)
-        x = int(id_num)*(44100)
-        if length-x < 44100:
-            audio = audio[x:]
-        else:
-            audio = audio[x:x+44100]  
+        audio = LoadAudio.mono(audio)                                             # make audio stereo
+        audio = LoadAudio.resize(audio, self.max_ms)                                # resize audio 
 
-        audio = torch.from_numpy(audio)
-        audio = audio.unsqueeze(0)
-        #audio = LoadAudio.stereo(audio)                                            # make audio stereo
-        audio = LoadAudio.resize(audio, sr, self.max_ms)                                # resize audio
         sgram = LoadAudio.spectrogram(audio, n_mels=64, n_fft=1024, hop_len=None)   # create spectrogram 
-        return sgram, class_id, audio_file
-
-
-class ClipAudioDS(Dataset):
-    def __init__(self, labels):
-        self.labels = labels
-        self.max_ms = 30000   # 30 secs
-        self.sr = 44100
-    
-            
-    def __len__(self):
-        return len(self.labels)    
         
+        audio_file, sr = audio
+        #return sgram, class_id, audio
+        return class_id, audio_file
 
-    def __getitem__(self, idx):
 
-        relative_path = self.labels[idx][0]+".wav"       
 
-        audio_file = relative_path.split("/")
-        audio_file = audio_file[-1]
-        
-        class_id = self.labels[idx][3]           # class label
-
-        audio = LoadAudio.load(relative_path)                                          # load audio file
-        audio = LoadAudio.resample(audio, self.sr)                                  # resample audio
-        audio, sr = LoadAudio.mono(audio)                                             # make audio mono
-        #audio = LoadAudio.stereo(audio)                                             # make audio stereo
-        audio = LoadAudio.resize(audio, sr, self.max_ms)                                # resize audio
-        sgram = LoadAudio.spectrogram(audio, n_mels=64, n_fft=1024, hop_len=None)   # create spectrogram 
-        return sgram, class_id, audio_file
-
-# 2579
 class TestDS(Dataset):
     def __init__(self, labels):
         self.labels = labels

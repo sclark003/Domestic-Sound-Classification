@@ -180,15 +180,6 @@ def inference (model, val_dl, le, audio_dict):
     return e_list
   
 
-def splitAudio(path,audio_id):
-    data, sr = LoadAudio.load(path+"/"+audio_id+".wav")
-    length = data.shape[1]//44100
-    print(length)
-    if length > 30:
-        length = 30
-    return length
-
-
 def inferencePrediction(outputs, audio_names, le):
     clip_outputs = outputs["clipwise_output"]      # seperate clipwise outputs
     _, predicted = torch.max(clip_outputs,1)       # find max value for clipwise prediction
@@ -199,57 +190,54 @@ def inferencePrediction(outputs, audio_names, le):
 
 #################################################################################################################
 
+def metaData(path,enc,train=True):
+    meta_data = []
+    if train==True:
+        folder = "/train/"
+    else:
+        folder = "/eval/"
+        
+    for entry in os.scandir(data_path):
+        file_path = data_path+"/"+entry.name+folder
+        for file in os.scandir(file_path):
+            class_id = enc.transform([entry.name])
+            relative_path = file_path+file.name
+            x = [relative_path,class_id[0]]
+            meta_data.append(x)
+            
+    return meta_data
+
+
 if __name__ == "__main__":
-    data_path = "/UrbanSound/data"
-    long_path = os.path.dirname('C:/Users/Sarah/Documents/Courses/Semester 2/Deep Learning for Audio and Music/Assesment/Coursework/')+data_path
+    data_path = os.path.dirname('C:/Users/Sarah/Documents/Courses/Project/Dataset/')
+    
     
     le = preprocessing.LabelEncoder()
-    le.fit(["air_conditioner","car_horn","children_playing","dog_bark","drilling",
-               "engine_idling","gun_shot","jackhammer","siren","street_music"])
+    le.fit(["Door Knocking","Shower Running","Toilet Flushing","Vacuum Cleaning","Keyboard Typing",
+                "Coughing","Neutral"])
     
-    meta_data = []
-    for entry in os.scandir(long_path):
-        for file in os.scandir(entry):
-            if file.name[-4:]=='.csv':
-                #length = splitAudio(long_path+"/"+entry.name, file.name[0:-4])
-                f = open(file, 'r')
-                line = f.readline()
-                relative_path = (long_path+"/"+entry.name+"/"+file.name[0:-4])
-                line = line.split(',')
-                class_name = line[3]
-                class_id = le.transform([class_name[0:-1]])
-                labels = np.zeros((10), dtype="f")
-                labels[class_id] = 1
-                for i in range(30):
-                    x = [relative_path+"_"+str(i+1)] + [line[0]]+[line[1]]+[labels]           # file, onset, offset, class
-                    meta_data.append(x)
+    train_meta = metaData(data_path,le)
+    test_meta = metaData(data_path, le, train=False)
     
-    
-    
-    data = AudioDS(meta_data)
-    
-    # Random split of 80:20 between training and validation
-    num_items = len(data)
-    num_train = round(num_items * 0.8)
-    num_val = num_items - num_train
-    train_data, val_data = random_split(data, [num_train, num_val])
+    train_data = AudioDS(train_meta)
+    test_data = AudioDS(test_meta)
     
     # Create training and validation data loaders
     train_dl = DataLoader(train_data, batch_size=30, shuffle=True)
-    # val_dl = DataLoader(val_data, batch_size=16, shuffle=False)
+    test_dl = DataLoader(test_data, batch_size=16, shuffle=False)
     
     
-    # Create the model and put it on the GPU if available
-    myModel = AudioClassifier()
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    myModel = myModel.to(device)
-    # Check that it is on Cuda
-    next(myModel.parameters()).device
+    # # Create the model and put it on the GPU if available
+    # myModel = AudioClassifier()
+    # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # myModel = myModel.to(device)
+    # # Check that it is on Cuda
+    # next(myModel.parameters()).device
     
     
-    # Train
-    num_epochs=60   # Just for demo, adjust this higher.
-    training(myModel, train_dl, num_epochs, le)
+    # # Train
+    # num_epochs=2   # Just for demo, adjust this higher.
+    # #training(myModel, train_dl, num_epochs, le)
     
-    # # Run inference on trained model with the validation set
-    # #inference(myModel, val_dl,le)
+    # # # Run inference on trained model with the validation set
+    # # #inference(myModel, val_dl,le)
