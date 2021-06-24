@@ -2,9 +2,9 @@ import os
 import numpy as np
 from sklearn import preprocessing
 import torch
-from torch.utils.data import DataLoader, random_split
-from Audio import AudioDS, LoadAudio
-from Model import AudioClassifier, PANNsLoss
+from torch.utils.data import DataLoader
+from Audio import AudioDS
+from Model import AudioClassifier
 from sklearn.metrics import f1_score
 from Predict import predictFramewise, postProcess
 from sklearn.metrics import confusion_matrix
@@ -225,6 +225,10 @@ if __name__ == "__main__":
     # Create training and validation data loaders
     train_dl = DataLoader(train_data, batch_size=30, shuffle=True)
     test_dl = DataLoader(test_data, batch_size=16, shuffle=False)
+    
+    for i, data in enumerate(train_dl):
+        print(data[1].shape)
+
     
     
     # # Create the model and put it on the GPU if available

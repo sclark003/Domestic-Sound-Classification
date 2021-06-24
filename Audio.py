@@ -2,6 +2,8 @@ import torch
 import torchaudio
 from torchaudio import transforms
 from torch.utils.data import Dataset
+import random
+from librosa.effects import pitch_shift
 
 
 class LoadAudio():
@@ -53,25 +55,44 @@ class LoadAudio():
         if (data_len > max_len):                                   # Truncate the signal to the given length     
           data = data[:,:max_len]    
         elif (data_len < max_len):
-            #pad_begin_len = random.randint(0, max_len - data_len)    # Length of padding to add at the beginning of the signal
-            #pad_end_len = max_len - data_len - pad_begin_len         # Length of padding to add at the beginning of the signal    
-            #pad_begin = torch.zeros((num_rows, pad_begin_len))       # Pad beginning with 0s
-            #pad_end = torch.zeros((num_rows, pad_end_len))           # Pad end with 0s   
-            #data = torch.cat((pad_begin, data, pad_end), 1)          # Concatenate data with padding 
+            pad_begin_len = random.randint(0, max_len - data_len)    # Length of padding to add at the beginning of the signal
+            pad_end_len = max_len - data_len - pad_begin_len         # Length of padding to add at the beginning of the signal    
             
-            pad_end_len = max_len - data_len         # Length of padding to add at the beginning of the signal  
-            pad_end = torch.zeros((num_rows, pad_end_len))           # Pad end with 0s 
-            data = torch.cat((data, pad_end), 1)          # Concatenate data with padding          
+            pad_begin = torch.zeros((num_rows, pad_begin_len))       # Pad beginning with 0s
+            pad_end = torch.zeros((num_rows, pad_end_len))           # Pad end with 0s   
+            data = torch.cat((pad_begin, data, pad_end), 1)          # Concatenate data with padding 
+            
         return (data, sr)
 
+    # shift pitch of audio data by random amount    
+    def pitchShift(audio,shift_int):
+        data, sr = audio
+        n = random.randint(0-shift_int,shift_int)
+        shifted_data = pitch_shift(data,sr,n)
+        return (shifted_data, sr)
 
     # create mel spectrograms
     def spectrogram(audio, n_mels=64, n_fft=1024, hop_len=None):
         data,sr = audio
         top_db = 80
         spec = transforms.MelSpectrogram(sr, n_fft=n_fft, hop_length=hop_len, n_mels=n_mels)(data)  # [channel, n_mels, time]
-        spec = transforms.AmplitudeToDB(top_db=top_db)(spec)
+        spec = transforms.AmplitudeToDB(top_db=top_db)(spec)                                        # convert to decibels
         return spec
+    
+    def spectro_augment(spec, max_mask_pct=0.1, n_freq_masks=1, n_time_masks=1):
+        _, n_mels, n_steps = spec.shape
+        mask_value = spec.mean()
+        aug_spec = spec
+    
+        freq_mask_param = max_mask_pct * n_mels
+        for _ in range(n_freq_masks):
+          aug_spec = transforms.FrequencyMasking(freq_mask_param)(aug_spec, mask_value)
+    
+        time_mask_param = max_mask_pct * n_steps
+        for _ in range(n_time_masks):
+          aug_spec = transforms.TimeMasking(time_mask_param)(aug_spec, mask_value)
+    
+        return aug_spec
 
 
 class AudioDS(Dataset):
@@ -79,6 +100,7 @@ class AudioDS(Dataset):
         self.labels = labels
         self.max_ms = 4000   # 4 secs
         self.sr = 44100
+        self.pitch_shift = 3
     
             
     def __len__(self):
@@ -96,53 +118,14 @@ class AudioDS(Dataset):
         audio = LoadAudio.resize(audio, self.max_ms)                                # resize audio 
 
         sgram = LoadAudio.spectrogram(audio, n_mels=64, n_fft=1024, hop_len=None)   # create spectrogram 
+        aug_sgram = LoadAudio.spectro_augment(sgram)
         
         audio_file, sr = audio
-        #return sgram, class_id, audio
-        return class_id, audio_file
+        return aug_sgram, class_id, audio_file
 
 
 
-class TestDS(Dataset):
-    def __init__(self, labels):
-        self.labels = labels
-        self.max_ms = 1000   # 30 secs
-        self.sr = 44100
-    
-            
-    def __len__(self):
-        return len(self.labels)    
-        
 
-    def __getitem__(self, idx):
-        relative_path = self.labels[idx][0]
-        relative_path = relative_path.split("/")
-        
-        audio_id = relative_path[-1]
-
-        audio_file = audio_id.split("_")
-        id_num = audio_file[1]
-        audio_file = audio_file[0]+".wav"
- 
-        relative_path = 'C:/Users/Sarah/Documents/Courses/Semester 2/Deep Learning for Audio and Music/Assesment/Coursework/Test_file/'+audio_file
-
-        audio = LoadAudio.load(relative_path)                                       # load audio file
-        audio = LoadAudio.resample(audio, self.sr)                                  # resample audio
-        audio,sr = LoadAudio.mono(audio)                                            # make audio mono
-        audio = audio.detach().numpy()
-        audio = audio[0,:]
-        length = len(audio)
-        x = int(id_num)*(self.sr)
-        if length-x < 44100:
-            audio = audio[x:]
-        else:
-            audio = audio[x:x+self.sr]  
-        audio = torch.from_numpy(audio)
-        audio = audio.unsqueeze(0)
-        #audio = LoadAudio.stereo(audio)                                            # make audio stereo
-        audio = LoadAudio.resize(audio, sr, self.max_ms)                            # resize audio
-        sgram = LoadAudio.spectrogram(audio, n_mels=64, n_fft=1024, hop_len=None)   # create spectrogram 
-        return sgram, audio_id
 
 
 
