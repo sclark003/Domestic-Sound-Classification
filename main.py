@@ -12,8 +12,8 @@ from sklearn.metrics import confusion_matrix
 
 def training(model, train_dl, num_epochs, le):
   # Loss Function, Optimizer and Scheduler
-  #criterion = nn.CrossEntropyLoss()
-  criterion = PANNsLoss()
+  criterion = nn.CrossEntropyLoss()
+  #criterion = PANNsLoss()
 
   optimizer = torch.optim.Adam(model.parameters(),lr=0.001)
   scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=0.001,
@@ -187,50 +187,48 @@ def inferencePrediction(outputs, audio_names, le):
     e = postProcess(e)
     return e
 
-
-#################################################################################################################
-
+# get data from dataset
 def metaData(path,enc,train=True):
     meta_data = []
     if train==True:
-        folder = "/train/"
-    else:
-        folder = "/eval/"
+        folder = "/train/"    # get train data
+    else: 
+        folder = "/eval/"     # get test data
         
-    for entry in os.scandir(data_path):
-        file_path = data_path+"/"+entry.name+folder
-        for file in os.scandir(file_path):
-            class_id = enc.transform([entry.name])
-            relative_path = file_path+file.name
-            x = [relative_path,class_id[0]]
-            meta_data.append(x)
+    for entry in os.scandir(data_path):                 # for each folder corresponding to a class in dataset
+        file_path = data_path+"/"+entry.name+folder     # set file path location
+        for file in os.scandir(file_path):              # for each sample in class folder
+            class_id = enc.transform([entry.name])      # get class numeric id according to label encoder
+            relative_path = file_path+file.name         # get path location of data sample for loading audio
+            x = [relative_path,class_id[0]]             # save class id and path
+            meta_data.append(x)                         # append to meta data list
             
     return meta_data
 
 
+#################################################################################################################
+
 if __name__ == "__main__":
-    data_path = os.path.dirname('C:/Users/Sarah/Documents/Courses/Project/Dataset/')
+    data_path = os.path.dirname('C:/Users/Sarah/Documents/Courses/Project/Dataset/')    # long path to dataset
     
     
     le = preprocessing.LabelEncoder()
-    le.fit(["Door Knocking","Shower Running","Toilet Flushing","Vacuum Cleaning","Keyboard Typing",
+    le.fit(["Door Knocking","Shower Running","Toilet Flushing","Vacuum Cleaning","Keyboard Typing",  # encode class labels as numeric id values
                 "Coughing","Neutral"])
     
-    train_meta = metaData(data_path,le)
-    test_meta = metaData(data_path, le, train=False)
+    train_meta = metaData(data_path,le)                 # get train data
+    test_meta = metaData(data_path, le, train=False)    # get test data
     
-    train_data = AudioDS(train_meta)
-    test_data = AudioDS(test_meta)
+    train_data = AudioDS(train_meta)                    # create train dataset
+    test_data = AudioDS(test_meta)                      # create test dataset
     
     # Create training and validation data loaders
     train_dl = DataLoader(train_data, batch_size=30, shuffle=True)
     test_dl = DataLoader(test_data, batch_size=16, shuffle=False)
     
     for i, data in enumerate(train_dl):
-        print(data[1].shape)
+        x = 1
 
-    
-    
     # # Create the model and put it on the GPU if available
     # myModel = AudioClassifier()
     # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -241,7 +239,7 @@ if __name__ == "__main__":
     
     # # Train
     # num_epochs=2   # Just for demo, adjust this higher.
-    # #training(myModel, train_dl, num_epochs, le)
+    # training(myModel, train_dl, num_epochs, le)
     
-    # # # Run inference on trained model with the validation set
-    # # #inference(myModel, val_dl,le)
+    # # Run inference on trained model with the validation set
+    # #inference(myModel, val_dl,le)
