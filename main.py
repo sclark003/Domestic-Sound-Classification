@@ -3,189 +3,129 @@ import numpy as np
 from sklearn import preprocessing
 import torch
 from torch.utils.data import DataLoader
+from torch.autograd import Variable
+import torch.nn as nn
 from Audio import AudioDS
 from Model import AudioClassifier
 from sklearn.metrics import f1_score
-from Predict import predictFramewise, postProcess
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
+import librosa.display
 
 
-def training(model, train_dl, num_epochs, le):
-  # Loss Function, Optimizer and Scheduler
-  criterion = nn.CrossEntropyLoss()
-  #criterion = PANNsLoss()
+def plotSpect(spec, sr):
+    fig, ax = plt.subplots()
+    img = librosa.display.specshow(spec, x_axis='time',  
+                             y_axis='mel', sr=sr,   
+                             fmax=8000, ax=ax)   
+    fig.colorbar(img, ax=ax, format='%+2.0f dB')   
+    ax.set(title='Mel-frequency spectrogram')
 
-  optimizer = torch.optim.Adam(model.parameters(),lr=0.001)
-  scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=0.001,
-                                                steps_per_epoch=int(len(train_dl)),
-                                                epochs=num_epochs,
-                                                anneal_strategy='linear')
-  # Repeat for each epoch
-  for epoch in range(num_epochs):
-    predictions_list = np.array([])
-    labels_list = np.array([])
-    running_loss = 0.0
-    correct_prediction = 0
-    total_prediction = 0
-    PATH = "check/model"
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    # Repeat for each batch in the training set
-    for i, data in enumerate(train_dl):
-        print(i)
-        # Get the input features and target labels, and put them on the GPU
-        inputs, labels = data[0].to(device), data[1].to(device)
-        audio_files = data[2]
+def mixup_data(x, y, use_cuda=True, alpha=1.0):
+    '''Returns mixed inputs, pairs of targets, and lambda'''
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1
+    batch_size = x.size()[0]
+    if use_cuda:
+        index = torch.randperm(batch_size).cuda()
+    else:
+        index = torch.randperm(batch_size)
+
+    mixed_x = lam * x + (1 - lam) * x[index, :]
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
+
+
+def mixup_criterion(criterion, pred, y_a, y_b, lam):
+    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
+
+
+def saveCheckpoint(acc, epoch, model):
+    # Save checkpoint.
+    print('Saving..')
+    state = {
+        'model': model,
+        'acc': acc,
+        'epoch': epoch,
+        'rng_state': torch.get_rng_state()
+    }
+    if not os.path.isdir('checkpoint'):
+        os.mkdir('checkpoint')
+    torch.save(state, './checkpoint/ckpt' + '_' + str(epoch+1))
+
+
+def loadCheckpoint(epoch, use_cuda):
+    print('==> Resuming from checkpoint..')
+    if use_cuda == True:
+      checkpoint = torch.load('/content/drive/MyDrive/check/ckpt' + '_' + str(epoch))
+    else:
+      checkpoint = torch.load('/content/drive/MyDrive/check/ckpt' + '_' + str(epoch), map_location=torch.device('cpu'))
+    model = checkpoint['model']
+    best_acc = checkpoint['acc']
+    start_epoch = checkpoint['epoch'] + 1
+    rng_state = checkpoint['rng_state']
+    torch.set_rng_state(rng_state)
+    print("Checkpoint best accuracy:", best_acc.detach().cpu().numpy())
+    print("Checkpoint start epoch:", start_epoch)
+    return model
+
+
+def training(model, train_dl, num_epochs, use_cuda):
+    
+    # Loss Function, Optimizer and Scheduler
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(),lr=0.001)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=0.01,
+                            steps_per_epoch=int(len(train_dl)),epochs=num_epochs)
+    # Repeat for each epoch
+    for epoch in range(num_epochs):
+
+        train_loss = 0
+        correct = 0
+        total = 0     
         
-        # Normalize the inputs
-        inputs_m, inputs_s = inputs.mean(), inputs.std()
-        inputs = (inputs - inputs_m) / inputs_s
-
-        # Zero the parameter gradients
-        optimizer.zero_grad()
-
-        # forward + backward + optimize
-        # Get predictions
-        outputs = model(inputs)
-        clip_outputs = outputs["clipwise_output"]
-        frame_outputs = outputs["framewise_output"]
-        
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
-        scheduler.step()
-
-        # Keep stats for Loss and Accuracy
-        running_loss += loss.item()
-    
-        # Get the predicted class with the highest score
-        _, predicted = torch.max(clip_outputs,1)
-        _, labels = torch.max(labels,1)
-          
-        # Count of predictions that matched the target label
-        correct_prediction += (predicted == labels).sum().item()
-        total_prediction += predicted.shape[0]
-    
-        predicted = predicted.detach().cpu().numpy()
-        labels = labels.detach().cpu().numpy()
-        predictions_list = np.append(predictions_list,predicted)
-        labels_list = np.append(labels_list,labels)
-    
-    # Print stats at the end of the epoch
-    num_batches = len(train_dl)
-    avg_loss = running_loss / num_batches
-    acc = correct_prediction/total_prediction
-    print(f'Epoch: {epoch}, Loss: {avg_loss:.2f}, Accuracy: {acc:.2f}')
-    class_ids = np.array([0,1,2,3,4,5,6,7,8,9])
-    print("A:", f1_score(labels_list, predictions_list, labels=class_ids, average='micro'))
-    torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss': running_loss,
-            }, PATH+"_"+str(epoch)+".pt")
-
-  print('Finished Training')
-
-
-def clip_inference (model, val_dl, le):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    predictions_list = np.array([])
-    labels_list = np.array([])
-    e_list = []
-    correct_prediction = 0
-    total_prediction = 0
-
-    # Disable gradient updates
-    with torch.no_grad():
-        for i,data in enumerate(val_dl):
+        # Repeat for each batch in the training set
+        for i, (inputs, targets, sr) in enumerate(train_dl):     
+            
             # Get the input features and target labels, and put them on the GPU
-            inputs, labels = data[0].to(device), data[1].to(device)
-            audio_files = data[2]
-    
+            if use_cuda:
+                inputs, targets = inputs.cuda(), targets.cuda()  
+            
             # Normalize the inputs
             inputs_m, inputs_s = inputs.mean(), inputs.std()
             inputs = (inputs - inputs_m) / inputs_s
-    
+            
+            inputs, targets_a, targets_b, lam = mixup_data(inputs, targets, use_cuda)            
+            inputs, targets_a, targets_b = map(Variable, (inputs, targets_a, targets_b))          
+            inputs = inputs.unsqueeze(1) # add channel dimension
+            
             # Get predictions
             outputs = model(inputs)
-            clip_outputs = outputs["clipwise_output"]
-            #frame_outputs = outputs["framewise_output"]
-    
-            # Get the predicted class with the highest score
-            _, predicted = torch.max(clip_outputs,1)
-            _, labels = torch.max(labels,1)
-    
-            predicted = predicted.detach().cpu().numpy()
-            predictions_list = np.append(predictions_list,predicted)
-            labels_list = np.append(labels_list,labels)
-    
-    #acc = correct_prediction/total_prediction
-    #print(f'Accuracy: {acc:.2f}, Total items: {total_prediction}')
-    class_ids = np.array([0,1,2,3,4,5,6,7,8,9])
-    conf = confusion_matrix(labels_list, predictions_list)
-    print("F1:", f1_score(labels_list, predictions_list, labels=class_ids, average='micro'))
-    return conf
-
-
-def inference (model, val_dl, le, audio_dict):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    predictions_list = np.array([])
-    labels_list = np.array([])
-    e_list = []
-    correct_prediction = 0
-    total_prediction = 0
-
-    # Disable gradient updates
-    with torch.no_grad():
-        for i,data in enumerate(val_dl):
-            # Get the input features and target labels, and put them on the GPU
-            inputs, labels = data[0].to(device), data[1].to(device)
-            audio_files = data[2]
-    
-            # Normalize the inputs
-            inputs_m, inputs_s = inputs.mean(), inputs.std()
-            inputs = (inputs - inputs_m) / inputs_s
-    
-            # Get predictions
-            outputs = model(inputs)
-            clip_outputs = outputs["clipwise_output"]
-            frame_outputs = outputs["framewise_output"]
             
-            e = inferencePrediction(outputs, data[2], le)
-            e_list.append(e)
-    
-            # Get the predicted class with the highest score
-            _, predicted = torch.max(clip_outputs,1)
-            predicted_np = predicted.detach().cpu().numpy()
-            predicted_np = np.bincount(predicted_np).argmax()
-            _, labels = torch.max(labels,1)
-         
-            # Count of predictions that matched the target label
-            #correct_prediction += (predicted == labels).sum().item()
-            #total_prediction += predicted.shape[0]
+            # Keep stats for Loss and Accuracy
+            loss = mixup_criterion(criterion, outputs, targets_a, targets_b, lam)
+            train_loss += loss.item()
+            _, predicted = torch.max(outputs.data, 1)
+            total += targets.size(0)
+            correct += (lam * predicted.eq(targets_a.data).cpu().sum().float()
+                        + (1 - lam) * predicted.eq(targets_b.data).cpu().sum().float())
+            acc = 100.*correct/total
             
-            x =audio_files[0]
-            labels = audio_dict[x[0:-4]]
-            labels = labels[0]
-    
-            predicted = predicted.detach().cpu().numpy()
-            predictions_list = np.append(predictions_list,predicted_np)
-            labels_list = np.append(labels_list,labels)
-    
-    #acc = correct_prediction/total_prediction
-    #print(f'Accuracy: {acc:.2f}, Total items: {total_prediction}')
-    class_ids = np.array([0,1,2,3,4,5,6,7,8,9])
-    print("F1:", f1_score(labels_list, predictions_list, labels=class_ids, average='micro'))
-    return e_list
-  
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+            
+        print("Epoch %d of %d with Loss: %.3f | Acc: %.3f%% (%d/%d)" 
+              % (epoch + 1, num_epochs, train_loss/(i+1), acc, correct, total))
 
-def inferencePrediction(outputs, audio_names, le):
-    clip_outputs = outputs["clipwise_output"]      # seperate clipwise outputs
-    _, predicted = torch.max(clip_outputs,1)       # find max value for clipwise prediction
-    e, class_id = predictFramewise(predicted, audio_names, le)
-    e = postProcess(e)
-    return e
+        saveCheckpoint(acc, epoch, model)
+
+    print('Finished Training')
+
 
 # get data from dataset
 def metaData(path,enc,train=True):
@@ -206,6 +146,39 @@ def metaData(path,enc,train=True):
     return meta_data
 
 
+def inference(model, test_dl, use_cuda):
+
+    pred = np.array([])
+    true = np.array([])
+        
+    # Disable gradient updates
+    with torch.no_grad():
+        for i, (inputs, targets, sr) in enumerate(test_dl):    
+            
+            # Get the input features and target labels, and put them on the GPU
+            if use_cuda:
+                inputs, targets = inputs.cuda(), targets.cuda()  
+            
+            # Normalize the inputs
+            inputs_m, inputs_s = inputs.mean(), inputs.std()
+            inputs = (inputs - inputs_m) / inputs_s
+         
+            inputs = inputs.unsqueeze(1) # add channel dimension
+            inputs = inputs.double()
+            
+            # Get predictions
+            outputs = model(inputs)
+
+            # Get the predicted class with the highest score
+            _, predicted = torch.max(outputs.data, 1)
+            
+            pred = np.append(pred, predicted.detach().cpu().numpy())
+            true = np.append(true, targets.detach().cpu().numpy())
+            
+        f1 = f1_score(true, pred, average='micro')
+        conf = confusion_matrix(true, pred)
+        return f1, conf
+
 #################################################################################################################
 
 if __name__ == "__main__":
@@ -216,7 +189,9 @@ if __name__ == "__main__":
     le.fit(["Door Knocking","Shower Running","Toilet Flushing","Vacuum Cleaning","Keyboard Typing",  # encode class labels as numeric id values
                 "Coughing","Neutral"])
     
+
     train_meta = metaData(data_path,le)                 # get train data
+    #train_meta = train_meta[0:2] + train_meta[308:310]
     test_meta = metaData(data_path, le, train=False)    # get test data
     
     train_data = AudioDS(train_meta)                    # create train dataset
@@ -225,21 +200,31 @@ if __name__ == "__main__":
     # Create training and validation data loaders
     train_dl = DataLoader(train_data, batch_size=30, shuffle=True)
     test_dl = DataLoader(test_data, batch_size=16, shuffle=False)
-    
-    for i, data in enumerate(train_dl):
-        x = 1
 
-    # # Create the model and put it on the GPU if available
-    # myModel = AudioClassifier()
-    # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    # myModel = myModel.to(device)
-    # # Check that it is on Cuda
-    # next(myModel.parameters()).device
+
+    # Create the model and put it on the GPU if available
+    myModel = AudioClassifier()
+    if torch.cuda.is_available():
+        device = "cuda:0"
+        use_cuda = True
+    else:
+        device = "cpu"
+        use_cuda = False
+   
+    #myModel = myModel.double()
+    myModel = myModel.to(device, dtype=torch.double)
+    next(myModel.parameters()).device      # Check that it is on Cuda
     
     
-    # # Train
-    # num_epochs=2   # Just for demo, adjust this higher.
-    # training(myModel, train_dl, num_epochs, le)
+    # Train
+    num_epochs=2   # Just for demo, adjust this higher.
+    #training(myModel, train_dl, num_epochs, use_cuda)
     
-    # # Run inference on trained model with the validation set
-    # #inference(myModel, val_dl,le)
+    
+    # Run inference on trained model with the validation set
+    myModel = loadCheckpoint(12, use_cuda)
+    
+    f1, cm = inference(myModel, test_dl, use_cuda)
+    print("Validation Set F1 score:",f1)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=le.classes_)
+    disp.plot() 

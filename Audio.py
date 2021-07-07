@@ -115,7 +115,7 @@ class AudioDS(Dataset):
         sgram_tensor = torch.tensor(sgram)
         
         audio_file, sr = audio
-        return sgram_tensor, class_id, audio_file
+        return sgram_tensor, class_id, sr
 
 
 
