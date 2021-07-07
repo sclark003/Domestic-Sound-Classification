@@ -5,8 +5,9 @@ import torch
 from torch.utils.data import DataLoader
 from torch.autograd import Variable
 import torch.nn as nn
+from torchvision import models
 from Audio import AudioDS
-from Model import AudioClassifier
+from Model import AudioClassifier, Net
 from sklearn.metrics import f1_score
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
@@ -203,7 +204,10 @@ if __name__ == "__main__":
 
 
     # Create the model and put it on the GPU if available
-    myModel = AudioClassifier()
+    #myModel = AudioClassifier()
+    v = models.resnet50(pretrained=False)
+    myModel = Net(v)      # 7 classes
+    
     if torch.cuda.is_available():
         device = "cuda:0"
         use_cuda = True

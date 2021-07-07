@@ -68,3 +68,17 @@ class AudioClassifier (nn.Module):
 
         # Final output
         return x
+
+    
+# add output layer to ResNet model
+class Net(nn.Module):
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model               
+        self.fc1 = nn.Linear(1000, 7)   
+    
+    def forward(self, x): # input = [16, 1, 64, 2579]
+        x = self.model(x) # load pytorch model
+        x = self.fc1(x)   # output 7 class predictions
+        return x
