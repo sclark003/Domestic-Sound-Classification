@@ -1,11 +1,11 @@
 """
-Run test on live audio input
+Run 10 consecutive tests on live audio input
 """
 
 
 import pyaudio
-import wave
 import numpy as np
+import warnings
 from sklearn import preprocessing
 import torch
 from torch.utils.data import DataLoader
@@ -122,6 +122,7 @@ def non_cnn(sgram, audio, scaler, loaded_model):
 
 
 
+
 """
 Code adapted from ReSpeaker microphone Github 'record_one_channel.py': 
 https://github.com/respeaker/4mics_hat/blob/master/recording_examples/record_one_channel.py
@@ -149,42 +150,46 @@ le.fit(["Door Knocking","Shower Running","Toilet Flushing","Vacuum Cleaning","Ke
                 "Coughing","Neutral"])
 
 p = pyaudio.PyAudio()
+j = 0
 print("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n") # clear screen
 print("______________________________________________________")
-stream = p.open(                                                           # open stream
-        rate=RESPEAKER_RATE,
-        format=p.get_format_from_width(RESPEAKER_WIDTH),
-        channels=RESPEAKER_CHANNELS,
-        input=True,
-        input_device_index=RESPEAKER_INDEX,)
+while j<10:
+    stream = p.open(                                                           # open stream
+                rate=RESPEAKER_RATE,
+                format=p.get_format_from_width(RESPEAKER_WIDTH),
+                channels=RESPEAKER_CHANNELS,
+                input=True,
+                input_device_index=RESPEAKER_INDEX,)
 
-print("* listening... *")
+    print("* listening... *")
 
-frames = [] 
-zz = np.array([])
+    frames = [] 
+    zz = np.array([])
 
-for i in range(0, int(RESPEAKER_RATE / CHUNK * RECORD_SECONDS)):
-    data = stream.read(CHUNK)
-    a = np.fromstring(data,dtype=np.int16)[0::2] # extract channel 0 data from 2 channels, if you want to extract channel 1, please change to [1::2]
-    zz = np.append(zz, a.astype(float))          # append float audio data
-    frames.append(a.tostring())
+    for i in range(0, int(RESPEAKER_RATE / CHUNK * RECORD_SECONDS)):
+        data = stream.read(CHUNK)
+        a = np.fromstring(data,dtype=np.int16)[0::2] # extract channel 0 data from 2 channels, if you want to extract channel 1, please change to [1::2]
+        zz = np.append(zz, a.astype(float))          # append float audio data
+        frames.append(a.tostring())
 
-print("* done recording")
+    #print("* done recording")
 
-stream.stop_stream()                                                       # stop and close stream
-stream.close()
+    stream.stop_stream()                                                       # stop and close stream
+    stream.close()
     
-# save as wav
-#wf = wave.open(WAVE_OUTPUT_FILENAME, 'wb')
-#wf.setnchannels(1)
-#wf.setsampwidth(p.get_sample_size(p.get_format_from_width(RESPEAKER_WIDTH)))
-#wf.setframerate(RESPEAKER_RATE)
-#wf.writeframes(b''.join(frames))
-#wf.close()
+    # save as wav
+    #wf = wave.open(WAVE_OUTPUT_FILENAME, 'wb')
+    #wf.setnchannels(1)
+    #wf.setsampwidth(p.get_sample_size(p.get_format_from_width(RESPEAKER_WIDTH)))
+    #wf.setframerate(RESPEAKER_RATE)
+    #wf.writeframes(b''.join(frames))
+    #wf.close()
 
-sgram, audio = buildSgram(zz)                   # extract sgram features
-cnn(myModel, sgram)                             # run cnn model
-#non_cnn(sgram, audio, sc, loaded_model)        # run non-cnn model
+
+    sgram, audio = buildSgram(zz)                   # extract sgram features
+    cnn(myModel, sgram)                             # run cnn model
+    #non_cnn(sgram, audio, sc, loaded_model)        # run non-cnn model
+    j+=1
 
 p.terminate()
 print("finished")
